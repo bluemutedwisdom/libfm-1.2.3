@@ -1,0 +1,59 @@
+Author: Andriy Grytsenko <andrej@rep.kiev.ua>
+Description: fm_mime_type_from_native_file() may return NULL if file does not exist. It should be handled appropriately to avoid crash.
+
+diff --git a/src/base/fm-file-info.c b/src/base/fm-file-info.c
+index 9072a14..fc3ca28 100644
+--- a/src/base/fm-file-info.c
++++ b/src/base/fm-file-info.c
+@@ -251,7 +251,12 @@ gboolean _fm_file_info_set_from_native_file(FmFileInfo* fi, const char* path,
+                 fi->mime_type = fm_mime_type_from_file_name(fm_path_get_basename(fi->path));
+         }
+         else
++        {
+             fi->mime_type = fm_mime_type_from_native_file(path, fm_path_get_basename(fi->path), &st);
++            if (G_UNLIKELY(fi->mime_type == NULL))
++                /* file might be deleted while we test it but we assume mime_type is not NULL */
++                fi->mime_type = fm_mime_type_from_name("application/octet-stream");
++        }
+ 
+         if (get_fast) /* do rough estimation */
+             fi->accessible = ((st.st_mode & S_IRUSR) == S_IRUSR);
+diff --git a/src/base/fm-mime-type.c b/src/base/fm-mime-type.c
+index e5ff140..1b28e48 100644
+--- a/src/base/fm-mime-type.c
++++ b/src/base/fm-mime-type.c
+@@ -127,7 +127,8 @@ FmMimeType* fm_mime_type_from_file_name(const char* ufile_name)
+  * @base_name: file basename
+  * @pstat: (allow-none): file atrributes
+  *
+- * Finds #FmMimeType descriptor for provided data.
++ * Finds #FmMimeType descriptor for provided data. If file does not exist
++ * then returns %NULL.
+  *
+  * Before 1.0.0 this API had name fm_mime_type_get_for_native_file.
+  *
+diff --git a/src/base/fm-templates.c b/src/base/fm-templates.c
+index ea3526b..cfc7b82 100644
+--- a/src/base/fm-templates.c
++++ b/src/base/fm-templates.c
+@@ -152,6 +152,10 @@ static FmMimeType *_fm_template_guess_mime_type(FmPath *path, FmMimeType *mime_t
+     gchar *filename, *type, *url;
+     GKeyFile *kf;
+ 
++    /* SF bug #902: if file was deleted instantly we get NULL here */
++    if (mime_type == NULL)
++        return NULL;
++
+     /* if file is desktop entry then find the real template file path */
+     if(mime_type != _fm_mime_type_get_application_x_desktop())
+     {
+@@ -678,7 +682,8 @@ static void on_dir_changed(GFileMonitor *mon, GFile *gf, GFile *other,
+                 g_warning("could not guess type of template %s, ignoring it",
+                           basename);
+             }
+-            fm_mime_type_unref(mime_type);
++            if (G_LIKELY(mime_type))
++                fm_mime_type_unref(mime_type);
+         }
+         else
+             g_debug("templates monitor: duplicate file %s", basename);
